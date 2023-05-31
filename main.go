@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/feiin/go-binlog-kafka/logger"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
 )
@@ -45,27 +46,40 @@ func main() {
 	gtid, _ := mysql.ParseGTIDSet("mysql", "68414ab6-fd2a-11ed-9e2d-0242ac110002:1")
 	streamer, _ := syncer.StartSyncGTID(gtid)
 
+	var rowData RowData
+
+	var eventRowList []RowData
+
+	ctx := context.Background()
+
 	for {
 
+		logger.Info(ctx).Interface("eventRowList", eventRowList).Msg("eventRowList")
+
+		rowData.AfterValues = nil
+		rowData.Values = nil
+		rowData.BeforeValues = nil
+
 		var ev *replication.BinlogEvent
+
 		var err error
 		if *binlogTimeout > 0 {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*binlogTimeout)*time.Millisecond)
 			ev, err = streamer.GetEvent(ctx)
 			cancel()
 			if err == context.DeadlineExceeded {
-				fmt.Printf("GetEventTimeout timeout")
+				logger.Info(ctx).Msg("GetEventTimeout timeout")
 				continue
 			}
 			if err != nil {
-				fmt.Printf("GetEvent error:%v", err)
+				logger.ErrorWith(ctx, err).Msg("GetEventTimeout error")
 				break
 			}
 
 		} else {
 			ev, err = streamer.GetEvent(context.Background())
 			if err != nil {
-				fmt.Printf("GetEvent error:%v", err)
+				logger.ErrorWith(ctx, err).Msg("GetEvent error")
 				break
 			}
 		}
@@ -75,37 +89,120 @@ func main() {
 		switch event {
 		case replication.WRITE_ROWS_EVENTv2, replication.WRITE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
+			columns, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			if err != nil {
+				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
+				panic(err)
+			}
+
+			rowData.Action = "insert"
 			for _, row := range rowsEvent.Rows {
-				fmt.Printf("insert row %v\n", row)
+
+				values := map[string]interface{}{}
+				for i, column := range columns {
+
+					if i+1 > len(row) {
+						continue
+					}
+
+					if _, ok := row[i].([]byte); ok {
+						values[column] = fmt.Sprintf("%s", row[i])
+					} else {
+						values[column] = row[i]
+					}
+				}
+				rowData.Values = values
+				eventRowList = append(eventRowList, rowData)
+
+				rowData.Table = string(rowsEvent.Table.Table)
 			}
 		case replication.UPDATE_ROWS_EVENTv2, replication.UPDATE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
-			for _, row := range rowsEvent.Rows {
-				fmt.Printf("update row %v\n", row)
+			columns, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			if err != nil {
+				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
+				panic(err)
+			}
+
+			rowData.Action = "update"
+			for j, row := range rowsEvent.Rows {
+
+				beforeValues := map[string]interface{}{}
+				afterValues := map[string]interface{}{}
+				if j%2 == 0 {
+					for i, column := range columns {
+
+						if i+1 > len(row) {
+							continue
+						}
+
+						if _, ok := row[i].([]byte); ok {
+							beforeValues[column] = fmt.Sprintf("%s", row[i])
+						} else {
+							beforeValues[column] = row[i]
+						}
+					}
+					rowData.BeforeValues = beforeValues
+
+				} else {
+
+					for i, column := range columns {
+						if i+1 > len(row) {
+							continue
+						}
+
+						if _, ok := row[i].([]byte); ok {
+							afterValues[column] = fmt.Sprintf("%s", row[i])
+						} else {
+							afterValues[column] = row[i]
+						}
+					}
+					rowData.AfterValues = afterValues
+					eventRowList = append(eventRowList, rowData)
+				}
 			}
 
 		case replication.DELETE_ROWS_EVENTv2, replication.DELETE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
+			columns, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			if err != nil {
+				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
+				panic(err)
+			}
+
+			rowData.Action = "delete"
+			if len(columns) == 0 {
+				break
+			}
+
 			for _, row := range rowsEvent.Rows {
-				fmt.Printf("delete row %v\n", row)
+
+				values := map[string]interface{}{}
+				for i, column := range columns {
+					if _, ok := row[i].([]byte); ok {
+						values[column] = fmt.Sprintf("%s", row[i])
+					} else {
+						values[column] = row[i]
+					}
+				}
+				rowData.Values = values
+				eventRowList = append(eventRowList, rowData)
 			}
 
 		case replication.QUERY_EVENT:
+			rowData.Gtid = ev.Event.(*replication.QueryEvent).GSet.String()
 			queryEvent := ev.Event.(*replication.QueryEvent)
-			fmt.Printf("query event %v\n", queryEvent)
+			logger.Info(ctx).Interface("queryEvent", queryEvent).Msg("QUERY_EVENT")
 		case replication.GTID_EVENT:
-			gtidEvent := ev.Event.(*replication.GTIDEvent)
-			fmt.Printf("gtid event %v\n", gtidEvent)
+			rowData.LogPos = ev.Header.LogPos
 
 		case replication.TABLE_MAP_EVENT:
-			tableMapEvent := ev.Event.(*replication.TableMapEvent)
-			fmt.Printf("table map event %v\n", tableMapEvent)
+			rowData.Schema = string(ev.Event.(*replication.TableMapEvent).Schema)
+			rowData.Table = string(ev.Event.(*replication.TableMapEvent).Table)
 
 		case replication.ROTATE_EVENT:
-			rotateEvent := ev.Event.(*replication.RotateEvent)
-			fmt.Printf("rotate event %v\n", rotateEvent)
+			rowData.BinLogFile = string(ev.Event.(*replication.RotateEvent).NextLogName)
 		default:
-			fmt.Printf("no action with event %v\n", event)
 		}
 	}
 
