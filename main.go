@@ -239,6 +239,7 @@ func main() {
 				rowData.Action = "DDL"
 				rowData.Values = map[string]interface{}{
 					"ddl_events": allDDLEvents,
+					"ddl_sql":    string(queryEvent.Query),
 				}
 				eventRowList = append(eventRowList, rowData)
 
