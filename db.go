@@ -65,7 +65,7 @@ func getMysqlMeta(schema string, table string) ([]MysqlTableMeta, error) {
 	return mysqlTableMeta, err
 }
 
-func getMysqlTableColumns(schema string, table string) ([]string, error) {
+func getMysqlTableColumns(schema string, table string) (columns []string, metaFromMaster bool, err error) {
 
 	schemaMap, ok := metaDataMap[schema]
 	if !ok {
@@ -76,16 +76,33 @@ func getMysqlTableColumns(schema string, table string) ([]string, error) {
 	if !ok {
 		tableColumns, err := getMysqlMeta(schema, table)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		metaFromMaster = true
 		for _, v := range tableColumns {
 			metaDataMap[schema][table] = append(metaDataMap[schema][table], v.Column_name)
 		}
 	}
 
-	var columns []string
 	for _, v := range metaDataMap[schema][table] {
 		columns = append(columns, v)
 	}
-	return columns, nil
+	return columns, metaFromMaster, nil
+}
+
+func updateMysqlTableColumns(schema, table string) error {
+	tableColumns, err := getMysqlMeta(schema, table)
+	if err != nil {
+		return err
+	}
+
+	_, ok := metaDataMap[schema]
+	if !ok {
+		metaDataMap[schema] = make(map[string][]string)
+	}
+
+	for _, v := range tableColumns {
+		metaDataMap[schema][table] = append(metaDataMap[schema][table], v.Column_name)
+	}
+	return nil
 }

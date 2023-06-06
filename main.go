@@ -9,6 +9,8 @@ import (
 	"github.com/feiin/go-binlog-kafka/logger"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/pingcap/tidb/parser"
+	_ "github.com/pingcap/tidb/types/parser_driver"
 )
 
 func main() {
@@ -52,13 +54,23 @@ func main() {
 
 	ctx := context.Background()
 
+	ddlParser := parser.New()
+
+	var forceSavePos bool
+
 	for {
 
-		logger.Info(ctx).Interface("eventRowList", eventRowList).Msg("eventRowList")
+		if forceSavePos == true && len(eventRowList) > 0 {
+			// push to kafka
+			logger.Info(ctx).Interface("eventRowList", eventRowList).Msg("eventRowList")
+			eventRowList = eventRowList[:0]
+			logger.Info(ctx).Interface("eventRowList", eventRowList).Msg("eventRowList clear")
+		}
 
 		rowData.AfterValues = nil
 		rowData.Values = nil
 		rowData.BeforeValues = nil
+		forceSavePos = false
 
 		var ev *replication.BinlogEvent
 
@@ -68,7 +80,8 @@ func main() {
 			ev, err = streamer.GetEvent(ctx)
 			cancel()
 			if err == context.DeadlineExceeded {
-				logger.Info(ctx).Msg("GetEventTimeout timeout")
+				// logger.Info(ctx).Msg("GetEventTimeout timeout")
+				forceSavePos = true
 				continue
 			}
 			if err != nil {
@@ -89,11 +102,12 @@ func main() {
 		switch event {
 		case replication.WRITE_ROWS_EVENTv2, replication.WRITE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
-			columns, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			columns, updateMeta, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
 			if err != nil {
 				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
 				panic(err)
 			}
+			forceSavePos = updateMeta
 
 			rowData.Action = "insert"
 			for _, row := range rowsEvent.Rows {
@@ -118,11 +132,12 @@ func main() {
 			}
 		case replication.UPDATE_ROWS_EVENTv2, replication.UPDATE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
-			columns, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			columns, updateMeta, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
 			if err != nil {
 				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
 				panic(err)
 			}
+			forceSavePos = updateMeta
 
 			rowData.Action = "update"
 			for j, row := range rowsEvent.Rows {
@@ -164,11 +179,12 @@ func main() {
 
 		case replication.DELETE_ROWS_EVENTv2, replication.DELETE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
-			columns, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			columns, updateMeta, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
 			if err != nil {
 				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
 				panic(err)
 			}
+			forceSavePos = updateMeta
 
 			rowData.Action = "delete"
 			if len(columns) == 0 {
@@ -179,6 +195,10 @@ func main() {
 
 				values := map[string]interface{}{}
 				for i, column := range columns {
+					if i+1 > len(row) {
+						continue
+					}
+
 					if _, ok := row[i].([]byte); ok {
 						values[column] = fmt.Sprintf("%s", row[i])
 					} else {
@@ -192,7 +212,39 @@ func main() {
 		case replication.QUERY_EVENT:
 			rowData.Gtid = ev.Event.(*replication.QueryEvent).GSet.String()
 			queryEvent := ev.Event.(*replication.QueryEvent)
-			logger.Info(ctx).Interface("queryEvent", queryEvent).Msg("QUERY_EVENT")
+			stmts, _, err := ddlParser.Parse(string(queryEvent.Query), "", "")
+			if err != nil {
+				logger.ErrorWith(ctx, err).Interface("queryEvent", queryEvent).Msg("Parse query error,will skip this query event")
+				continue
+			}
+
+			var allDDLEvents []*DDLEvent
+			for _, stmt := range stmts {
+				ddlEvents := parseDDLStmt(stmt)
+				for _, ddlEvent := range ddlEvents {
+					if ddlEvent.Schema == "" {
+						ddlEvent.Schema = string(queryEvent.Schema)
+					}
+					allDDLEvents = append(allDDLEvents, ddlEvent)
+					// update mysql table columns
+					err := updateMysqlTableColumns(ddlEvent.Schema, ddlEvent.Table)
+					if err != nil {
+						logger.ErrorWith(ctx, err).Msg("updateMysqlTableColumns error")
+						panic(err)
+					}
+				}
+			}
+
+			if len(allDDLEvents) > 0 {
+				rowData.Action = "DDL"
+				rowData.Values = map[string]interface{}{
+					"ddl_events": allDDLEvents,
+				}
+				eventRowList = append(eventRowList, rowData)
+
+				forceSavePos = true
+			}
+
 		case replication.GTID_EVENT:
 			rowData.LogPos = ev.Header.LogPos
 
@@ -204,6 +256,7 @@ func main() {
 			rowData.BinLogFile = string(ev.Event.(*replication.RotateEvent).NextLogName)
 		default:
 		}
+
 	}
 
 }
