@@ -5,8 +5,8 @@ import (
 )
 
 type DDLEvent struct {
-	Schema string
-	Table  string
+	Schema string `json:"schema"`
+	Table  string `json:"table"`
 }
 
 func parseDDLStmt(stmt ast.StmtNode) (es []*DDLEvent) {
