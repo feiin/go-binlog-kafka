@@ -14,7 +14,7 @@ A simple MySQL tool for syncing BinLog to Kafka with JSON format
 
 ## 推送的JSON格式数据
 
-每条数据变更(insert/update/delete)都会解析以下JSON
+每条数据变更(insert/update/delete)都会解析成以下格式JSON
 ```
 {
     "binlog_file": "mysql-bin.000052", // binlog file
