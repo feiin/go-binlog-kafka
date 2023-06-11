@@ -1,6 +1,5 @@
 # go-binlog-kafka
-A MySQL simple tool for syncing BinLog to Kafka with JSON format 
-
+A simple MySQL tool for syncing BinLog to Kafka with JSON format 
 
 一个将binlog解析为json并push到kafka消息队列简单工具
 
