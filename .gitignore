@@ -21,3 +21,4 @@
 go.work
 
 go-binlog-kafka
+*_binlog_center.json
