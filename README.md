@@ -8,12 +8,47 @@ A simple MySQL tool for syncing BinLog to Kafka with JSON format
 最简单方式启动查看
 
 ```
-./go-binlog-kafka -src_db_user=root -src_db_pass=123123 -src_db_host=10.0.0.1  -src_db_port=3306 --binlog_timeout=100  -src_db_gtid=68414ab6-fd2a-11ed-9e2d-0242ac110002:1 -db_instance_name="test" -debug=true
+./go-binlog-kafka -src_db_user=root -src_db_pass=123123 -src_db_host=10.0.0.1  -src_db_port=3306 --binlog_timeout=100  -src_db_gtid=68414ab6-fd2a-11ed-9e2d-0242ac110002:1 -db_instance_name="test" -debug=true -kafka_addr=10.0.0.1:9092,10.0.0.2:9092 -kafka_topic_name=test
 
 ``` 
 
+## 推送的JSON格式数据
+
+每条数据变更(insert/update/delete)都会解析以下JSON
+```
+{
+    "binlog_file": "mysql-bin.000052", // binlog file
+    "log_pos": 3013167, // binlog position
+    "action": "insert", // insert/update/delete/DDL action
+    "table": "tests",  // 表名称
+    "gtid": "68414ab6-fd2a-11ed-9e2d-0242ac110002:1-608",// GTID
+    "schema": "tests", // 库名称
+    "values": null, // insert/delete 时是对应行数据
+    "before_values":{...} // update 变更前行数据
+    "after_values":{...} // update 变更后行数据
+}
+```
+
+```
+# insert时，推送格式数据如下
+[{"binlog_file":"mysql-bin.000052","log_pos":3013167,"action":"insert","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-608","schema":"tests","values":{"id":8,"name":"insert test","type":1}}.....]
+
+# update时，推送格式如下
+
+[{"binlog_file":"mysql-bin.000052","log_pos":3013722,"action":"update","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-610","schema":"tests","before_values":{"id":8,"name":"insert test","type":1},"after_values":{"id":8,"name":"update test","type":1}}....]
+
+# delete时,推送数据如下
+[{"binlog_file":"mysql-bin.000052","log_pos":3014032,"action":"delete","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-611","schema":"tests","values":{"id":8,"name":"update test","type":1}}]
+
+# DDL操作时
+
+[{"binlog_file":"mysql-bin.000052","log_pos":3014315,"action":"DDL","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-612","schema":"tests","values":{"ddl_events":[{"schema":"tests","table":"tests","type":"alter_table"}],"ddl_sql":"alter table tests add column sign varchar(32) not null default '' comment 'sign'"}}...]
+```
+
 ## Options
 
+- kafka_addr 推送目标kafka的地址
+- kafka_topic_name 推送目标的kafka topic名称
 - src_db_user Binlog源库用户
 - src_db_pass Binlog源库密码
 - src_db_host Binlog源库Host
@@ -48,3 +83,4 @@ CREATE TABLE `binlog_info` (
   UNIQUE KEY `uniq_ix` (`instance_name`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;
 ```
+
