@@ -1,4 +1,4 @@
-package main
+package db
 
 import (
 	"github.com/pingcap/tidb/parser/ast"
@@ -10,7 +10,7 @@ type DDLEvent struct {
 	Type   string `json:"type"`
 }
 
-func parseDDLStmt(stmt ast.StmtNode) (es []*DDLEvent) {
+func ParseDDLStmt(stmt ast.StmtNode) (es []*DDLEvent) {
 	switch t := stmt.(type) {
 	case *ast.RenameTableStmt:
 		for _, tableInfo := range t.TableToTables {

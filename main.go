@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/feiin/go-binlog-kafka/db"
 	"github.com/feiin/go-binlog-kafka/logger"
+
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
 	"github.com/pingcap/tidb/parser"
@@ -14,25 +18,48 @@ import (
 )
 
 func main() {
-	// dbInstanceName := flag.String("db_instance_name", "", "Database instance name")
-	// kafkaTopicName := flag.String("kafka_topic_name", "", "Kafka topic name")
-	// kafkaAddrr := flag.String("kafka_addr", "", "Kafka address")
-	adminHost := flag.String("admin_host", "", "admin manage db host")
-	adminPort := flag.Int("admin_port", 3306, "admin manage db port")
-	adminUser := flag.String("admin_user", "root", "admin manage db user")
-	adminPass := flag.String("admin_pass", "", "admin manage db password")
+	dbInstanceName := flag.String("db_instance_name", "", "Database instance name")
+	kafkaTopicName := flag.String("kafka_topic_name", "", "Kafka topic name")
+	kafkaAddr := flag.String("kafka_addr", "", "Kafka address")
+	adminHost := flag.String("admin_host", "", "binlog meta manage db host")
+	adminPort := flag.Int("admin_port", 3306, "binlog meta manage db port")
+	adminUser := flag.String("admin_user", "root", "binlog meta manage db user")
+	adminPass := flag.String("admin_pass", "", "binlog meta manage db password")
+	adminDatabase := flag.String("admin_database", "binlog_center", "binlog meta manage db name")
+	metaStoreType := flag.String("meta_store_type", "file", "sync source db type: file/mysql")
 	srcDbUser := flag.String("src_db_user", "root", "sync source db user")
 	srcDbPass := flag.String("src_db_pass", "", "sync source db password")
 	srcDbHost := flag.String("src_db_host", "", "sync source db host")
 	srcDbPort := flag.Int("src_db_port", 3306, "sync source db port")
+	srcDbGtid := flag.String("src_db_gtid", "", "sync source db gtid")
 	replicationId := flag.Int("replication_id", 212388888, "replication id")
 	binlogTimeout := flag.Int64("binlog_timeout", 0, "binlog max read timeout")
+	isDebug := flag.Bool("debug", false, "is debug mode")
 	flag.Parse()
 
-	err := initManageDb(*adminHost, *adminPort, *adminUser, *adminPass, "binlog_center", *srcDbHost, *srcDbUser, *srcDbPass, *srcDbPort)
+	kafkaAddress := strings.Split(*kafkaAddr, ",")
+
+	err := InitKafka(kafkaAddress)
 	if err != nil {
-		fmt.Printf("initManageDb error:%v", err)
-		return
+		logger.ErrorWith(context.Background(), err).Msg("InitKafka error")
+		panic(err)
+	}
+
+	err = db.InitManageDb(*adminHost, *adminPort, *adminUser, *adminPass, *adminDatabase, *srcDbHost, *srcDbUser, *srcDbPass, *srcDbPort, *metaStoreType, *srcDbGtid)
+	if err != nil {
+		logger.ErrorWith(context.Background(), err).Msg("initManageDb error")
+		panic(err)
+	}
+
+	binlogCenterPos, err := db.GetReplicationPos(context.Background(), *dbInstanceName)
+	if err != nil {
+		logger.ErrorWith(context.Background(), err).Msg("GetReplicationPos error")
+		panic(err)
+	}
+
+	if binlogCenterPos != nil {
+		*srcDbGtid = binlogCenterPos.BinlogGtid
+		db.InitBinLogCenter(binlogCenterPos)
 	}
 
 	cfg := replication.BinlogSyncerConfig{
@@ -45,7 +72,7 @@ func main() {
 	}
 
 	syncer := replication.NewBinlogSyncer(cfg)
-	gtid, _ := mysql.ParseGTIDSet("mysql", "68414ab6-fd2a-11ed-9e2d-0242ac110002:1")
+	gtid, _ := mysql.ParseGTIDSet("mysql", *srcDbGtid)
 	streamer, _ := syncer.StartSyncGTID(gtid)
 
 	var rowData RowData
@@ -60,11 +87,37 @@ func main() {
 
 	for {
 
-		if forceSavePos == true && len(eventRowList) > 0 {
-			// push to kafka
-			logger.Info(ctx).Interface("eventRowList", eventRowList).Msg("eventRowList")
+		// batch_count 100
+		if len(eventRowList) >= 100 {
+			forceSavePos = true
+		}
+
+		if forceSavePos && len(eventRowList) > 0 {
+			// 1. push to kafka
+			pushJsonData, err := json.Marshal(eventRowList)
+			if err != nil {
+				logger.ErrorWith(ctx, err).Msg("json.Marshal error")
+				panic(err)
+			}
+			if *isDebug {
+				logger.Info(ctx).Interface("pushJsonData", string(pushJsonData)).Msg("push to kafka")
+			}
+			err = sendKafkaMsg(ctx, pushJsonData, *kafkaTopicName)
+			if err != nil {
+				logger.ErrorWith(ctx, err).Msg("sendKafkaMsg error")
+				panic(err)
+			}
+			logger.Info(ctx).Interface("rowCount", len(eventRowList)).Msg("success to push to kafka")
+
+			// 2. update position
+			lastRow := eventRowList[len(eventRowList)-1]
+			err = db.SaveReplicationPos(ctx, *dbInstanceName, lastRow.LogPos, lastRow.Gtid, lastRow.BinLogFile)
+			if err != nil {
+				logger.ErrorWith(ctx, err).Msg("SaveReplicationPos error")
+				panic(err)
+			}
+
 			eventRowList = eventRowList[:0]
-			logger.Info(ctx).Interface("eventRowList", eventRowList).Msg("eventRowList clear")
 		}
 
 		rowData.AfterValues = nil
@@ -102,7 +155,7 @@ func main() {
 		switch event {
 		case replication.WRITE_ROWS_EVENTv2, replication.WRITE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
-			columns, updateMeta, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			columns, updateMeta, err := db.GetMysqlTableColumns(rowData.Schema, rowData.Table)
 			if err != nil {
 				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
 				panic(err)
@@ -132,7 +185,7 @@ func main() {
 			}
 		case replication.UPDATE_ROWS_EVENTv2, replication.UPDATE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
-			columns, updateMeta, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			columns, updateMeta, err := db.GetMysqlTableColumns(rowData.Schema, rowData.Table)
 			if err != nil {
 				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
 				panic(err)
@@ -179,7 +232,7 @@ func main() {
 
 		case replication.DELETE_ROWS_EVENTv2, replication.DELETE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
-			columns, updateMeta, err := getMysqlTableColumns(rowData.Schema, rowData.Table)
+			columns, updateMeta, err := db.GetMysqlTableColumns(rowData.Schema, rowData.Table)
 			if err != nil {
 				logger.ErrorWith(ctx, err).Msg("getMysqlTableColumns error")
 				panic(err)
@@ -218,16 +271,16 @@ func main() {
 				continue
 			}
 
-			var allDDLEvents []*DDLEvent
+			var allDDLEvents []*db.DDLEvent
 			for _, stmt := range stmts {
-				ddlEvents := parseDDLStmt(stmt)
+				ddlEvents := db.ParseDDLStmt(stmt)
 				for _, ddlEvent := range ddlEvents {
 					if ddlEvent.Schema == "" {
 						ddlEvent.Schema = string(queryEvent.Schema)
 					}
 					allDDLEvents = append(allDDLEvents, ddlEvent)
 					// update mysql table columns
-					err := updateMysqlTableColumns(ddlEvent.Schema, ddlEvent.Table)
+					err := db.UpdateMysqlTableColumns(ddlEvent.Schema, ddlEvent.Table)
 					if err != nil {
 						logger.ErrorWith(ctx, err).Msg("updateMysqlTableColumns error")
 						panic(err)

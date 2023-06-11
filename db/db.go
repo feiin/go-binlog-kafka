@@ -1,4 +1,4 @@
-package main
+package db
 
 import (
 	"github.com/feiin/ploto"
@@ -15,18 +15,13 @@ type MysqlTableMeta struct {
 
 var db *ploto.Dialect
 
-func initManageDb(dbHost string, dbPort int, dbUser, dbPass string, dbDatabase string, srcHost, srcUser, srcPass string, srcPort int) (err error) {
+func InitManageDb(dbHost string, dbPort int, dbUser, dbPass string, dbDatabase string, srcHost, srcUser, srcPass string, srcPort int, metaStoreType string, srcGTID string) (err error) {
+
+	binlogInfoStoreType = metaStoreType
 
 	config := ploto.DialectConfig{
 
 		Clients: map[string]interface{}{
-			"binlog_center": map[string]interface{}{
-				"host":     dbHost,
-				"port":     float64(dbPort),
-				"user":     dbUser,
-				"password": dbPass,
-				"database": dbDatabase,
-			},
 			"sync_src_db": map[string]interface{}{
 				"host":     srcHost,
 				"port":     float64(srcPort),
@@ -54,18 +49,28 @@ func initManageDb(dbHost string, dbPort int, dbUser, dbPass string, dbDatabase s
 		},
 	}
 
+	if binlogInfoStoreType != "file" {
+		config.Clients["binlog_center"] = map[string]interface{}{
+			"host":     dbHost,
+			"port":     float64(dbPort),
+			"user":     dbUser,
+			"password": dbPass,
+			"database": dbDatabase,
+		}
+	}
+
 	db, err = ploto.Open(config, &ploto.DefaultLogger{})
 	return err
 
 }
 
-func getMysqlMeta(schema string, table string) ([]MysqlTableMeta, error) {
+func GetMysqlMeta(schema string, table string) ([]MysqlTableMeta, error) {
 	var mysqlTableMeta []MysqlTableMeta
 	err := db.Use("sync_src_db").Query("select table_schema,table_name,column_name from columns where table_schema=? and table_name=?", schema, table).Scan(&mysqlTableMeta)
 	return mysqlTableMeta, err
 }
 
-func getMysqlTableColumns(schema string, table string) (columns []string, metaFromMaster bool, err error) {
+func GetMysqlTableColumns(schema string, table string) (columns []string, metaFromMaster bool, err error) {
 
 	schemaMap, ok := metaDataMap[schema]
 	if !ok {
@@ -74,7 +79,7 @@ func getMysqlTableColumns(schema string, table string) (columns []string, metaFr
 
 	_, ok = schemaMap[table]
 	if !ok {
-		tableColumns, err := getMysqlMeta(schema, table)
+		tableColumns, err := GetMysqlMeta(schema, table)
 		if err != nil {
 			return nil, false, err
 		}
@@ -90,8 +95,8 @@ func getMysqlTableColumns(schema string, table string) (columns []string, metaFr
 	return columns, metaFromMaster, nil
 }
 
-func updateMysqlTableColumns(schema, table string) error {
-	tableColumns, err := getMysqlMeta(schema, table)
+func UpdateMysqlTableColumns(schema, table string) error {
+	tableColumns, err := GetMysqlMeta(schema, table)
 	if err != nil {
 		return err
 	}
@@ -101,8 +106,16 @@ func updateMysqlTableColumns(schema, table string) error {
 		metaDataMap[schema] = make(map[string][]string)
 	}
 
+	metaDataMap[schema][table] = nil
 	for _, v := range tableColumns {
 		metaDataMap[schema][table] = append(metaDataMap[schema][table], v.Column_name)
+	}
+	return nil
+}
+
+func InitBinLogCenter(binlogCenter *BinLogCenterInfo) error {
+	if binlogCenter.MetaData != nil {
+		metaDataMap = binlogCenter.MetaData
 	}
 	return nil
 }
