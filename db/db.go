@@ -66,7 +66,7 @@ func InitManageDb(dbHost string, dbPort int, dbUser, dbPass string, dbDatabase s
 
 func GetMysqlMeta(schema string, table string) ([]MysqlTableMeta, error) {
 	var mysqlTableMeta []MysqlTableMeta
-	err := db.Use("sync_src_db").Query("select table_schema,table_name,column_name from columns where table_schema=? and table_name=?", schema, table).Scan(&mysqlTableMeta)
+	err := db.Use("sync_src_db").Query("select table_schema as table_schema,table_name as table_name,column_name as column_name from columns where table_schema=? and table_name=?", schema, table).Scan(&mysqlTableMeta)
 	return mysqlTableMeta, err
 }
 
