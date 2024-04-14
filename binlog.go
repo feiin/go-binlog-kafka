@@ -6,6 +6,7 @@ type RowData struct {
 	Action     string `json:"action"`
 	Table      string `json:"table"`
 	Gtid       string `json:"gtid"`
+	Timestamp  uint32 `json:"timestamp"`
 	Schema     string `json:"schema"`
 	// insert
 	Values map[string]interface{} `json:"values,omitempty"`

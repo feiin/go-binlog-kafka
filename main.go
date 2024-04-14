@@ -151,6 +151,8 @@ func main() {
 		}
 
 		event := ev.Header.EventType
+		// timestamp
+		rowData.Timestamp = ev.Header.Timestamp
 
 		switch event {
 		case replication.WRITE_ROWS_EVENTv2, replication.WRITE_ROWS_EVENTv1:
