@@ -22,6 +22,7 @@ A simple MySQL tool for syncing BinLog to Kafka with JSON format
     "action": "insert", // insert/update/delete/DDL action
     "table": "tests",  // 表名称
     "gtid": "68414ab6-fd2a-11ed-9e2d-0242ac110002:1-608",// GTID
+    "timestamp": 1713158815, // binlog event时间戳  2024-04-15 13:26:55
     "schema": "tests", // 库名称
     "values": null, // insert/delete 时是对应行数据
     "before_values":{...} // update 变更前行数据
