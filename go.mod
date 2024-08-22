@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/Shopify/sarama v1.29.0
-	github.com/feiin/ploto v0.4.0
+	github.com/feiin/ploto v0.5.1
 	github.com/go-mysql-org/go-mysql v1.7.0
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/pingcap/tidb v0.0.0-20221126021158-6b02a5d8ba7d

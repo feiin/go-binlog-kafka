@@ -21,26 +21,26 @@ func InitManageDb(dbHost string, dbPort int, dbUser, dbPass string, dbDatabase s
 
 	config := ploto.DialectConfig{
 
-		Clients: map[string]interface{}{
-			"sync_src_db": map[string]interface{}{
-				"host":     srcHost,
-				"port":     float64(srcPort),
-				"user":     srcUser,
-				"password": srcPass,
-				"database": "information_schema",
+		Clients: map[string]*ploto.DialectClientOption{
+			"sync_src_db": {
+				Host:     srcHost,
+				Port:     srcPort,
+				User:     srcUser,
+				Password: srcPass,
+				Database: "information_schema",
 			},
 		},
-		Default: map[string]interface{}{
-			"port":    float64(3306),
-			"dialect": "mysql",
-			"pool": map[string]interface{}{
-				"maxIdleConns": float64(2),
-				"maxLeftTime":  float64(60000),
-				"maxOpenConns": float64(5),
+		Default: &ploto.DialectClientOption{
+			Port:    3306,
+			Dialect: "mysql",
+			Pool: &ploto.DialectClientOptionPool{
+				MaxIdleConns: 2,
+				MaxLeftTime:  60000,
+				MaxOpenConns: 5,
 			},
-			"dialectOptions": map[string]interface{}{
-				"parseTime":       true,
-				"multiStatements": true,
+			DialectOptions: map[string]string{
+				"parseTime":       "true",
+				"multiStatements": "true",
 				"writeTimeout":    "3000ms",
 				"readTimeout":     "3000ms",
 				"timeout":         "3000ms",
@@ -50,12 +50,12 @@ func InitManageDb(dbHost string, dbPort int, dbUser, dbPass string, dbDatabase s
 	}
 
 	if binlogInfoStoreType != "file" {
-		config.Clients["binlog_center"] = map[string]interface{}{
-			"host":     dbHost,
-			"port":     float64(dbPort),
-			"user":     dbUser,
-			"password": dbPass,
-			"database": dbDatabase,
+		config.Clients["binlog_center"] = &ploto.DialectClientOption{
+			Host:     dbHost,
+			Port:     dbPort,
+			User:     dbUser,
+			Password: dbPass,
+			Database: dbDatabase,
 		}
 	}
 
