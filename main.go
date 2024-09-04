@@ -35,6 +35,8 @@ func main() {
 	replicationId := flag.Int("replication_id", 212388888, "replication id")
 	binlogTimeout := flag.Int64("binlog_timeout", 0, "binlog max read timeout")
 	isDebug := flag.Bool("debug", false, "is debug mode")
+	batchMaxRows := flag.Int("batch_max_rows", 10, "binlog batch push max rows")
+
 	flag.Parse()
 
 	kafkaAddress := strings.Split(*kafkaAddr, ",")
@@ -88,7 +90,7 @@ func main() {
 	for {
 
 		// batch_count 100
-		if len(eventRowList) >= 100 {
+		if len(eventRowList) >= *batchMaxRows {
 			forceSavePos = true
 		}
 
