@@ -17,6 +17,48 @@ import (
 	_ "github.com/pingcap/tidb/types/parser_driver"
 )
 
+func pushDataToKafka(ctx context.Context, eventRowList []RowData, kafkaTopicName string, isSingleMode bool, isDebug bool) error {
+
+	if isSingleMode {
+		for _, row := range eventRowList {
+			// 1. push to kafka
+			pushJsonData, err := json.Marshal(row)
+			if err != nil {
+				logger.ErrorWith(ctx, err).Msg("json.Marshal error")
+				return err
+			}
+
+			err = sendKafkaMsg(ctx, pushJsonData, kafkaTopicName)
+			if err != nil {
+				logger.ErrorWith(ctx, err).Msg("sendKafkaMsg error")
+				return err
+			}
+			if isDebug {
+				logger.Info(ctx).Interface("pushJsonData", string(pushJsonData)).Msg("pushed to kafka")
+			}
+
+		}
+	} else {
+		// 1. push to kafka
+		pushJsonData, err := json.Marshal(eventRowList)
+		if err != nil {
+			logger.ErrorWith(ctx, err).Msg("json.Marshal error")
+			return err
+		}
+
+		err = sendKafkaMsg(ctx, pushJsonData, kafkaTopicName)
+		if err != nil {
+			logger.ErrorWith(ctx, err).Msg("sendKafkaMsg error")
+			return err
+		}
+		if isDebug {
+			logger.Info(ctx).Interface("pushJsonData", string(pushJsonData)).Msg("pushed to kafka")
+		}
+	}
+
+	logger.Info(ctx).Interface("rowCount", len(eventRowList)).Msg("success to push to kafka")
+	return nil
+}
 func main() {
 	dbInstanceName := flag.String("db_instance_name", "", "Database instance name")
 	kafkaTopicName := flag.String("kafka_topic_name", "", "Kafka topic name")
@@ -36,10 +78,12 @@ func main() {
 	binlogTimeout := flag.Int64("binlog_timeout", 0, "binlog max read timeout")
 	isDebug := flag.Bool("debug", false, "is debug mode")
 	batchMaxRows := flag.Int("batch_max_rows", 10, "binlog batch push max rows")
+	push_msg_mode := flag.String("push_msg_mode", "array", "push msg mode option array/single")
 
 	flag.Parse()
 
 	kafkaAddress := strings.Split(*kafkaAddr, ",")
+	isSingleMode := *push_msg_mode == "single"
 
 	err := InitKafka(kafkaAddress)
 	if err != nil {
@@ -95,21 +139,12 @@ func main() {
 		}
 
 		if forceSavePos && len(eventRowList) > 0 {
-			// 1. push to kafka
-			pushJsonData, err := json.Marshal(eventRowList)
+
+			err := pushDataToKafka(ctx, eventRowList, *kafkaTopicName, isSingleMode, *isDebug)
 			if err != nil {
-				logger.ErrorWith(ctx, err).Msg("json.Marshal error")
+				logger.ErrorWith(ctx, err).Msg("pushDataToKafka error")
 				panic(err)
 			}
-			if *isDebug {
-				logger.Info(ctx).Interface("pushJsonData", string(pushJsonData)).Msg("push to kafka")
-			}
-			err = sendKafkaMsg(ctx, pushJsonData, *kafkaTopicName)
-			if err != nil {
-				logger.ErrorWith(ctx, err).Msg("sendKafkaMsg error")
-				panic(err)
-			}
-			logger.Info(ctx).Interface("rowCount", len(eventRowList)).Msg("success to push to kafka")
 
 			// 2. update position
 			lastRow := eventRowList[len(eventRowList)-1]
@@ -183,9 +218,9 @@ func main() {
 					}
 				}
 				rowData.Values = values
+				rowData.Table = string(rowsEvent.Table.Table)
 				eventRowList = append(eventRowList, rowData)
 
-				rowData.Table = string(rowsEvent.Table.Table)
 			}
 		case replication.UPDATE_ROWS_EVENTv2, replication.UPDATE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
@@ -234,6 +269,10 @@ func main() {
 				}
 			}
 
+			if isSingleMode {
+				forceSavePos = true
+			}
+
 		case replication.DELETE_ROWS_EVENTv2, replication.DELETE_ROWS_EVENTv1:
 			rowsEvent := ev.Event.(*replication.RowsEvent)
 			columns, updateMeta, err := db.GetMysqlTableColumns(rowData.Schema, rowData.Table)
@@ -264,6 +303,10 @@ func main() {
 				}
 				rowData.Values = values
 				eventRowList = append(eventRowList, rowData)
+			}
+
+			if isSingleMode {
+				forceSavePos = true
 			}
 
 		case replication.QUERY_EVENT:
