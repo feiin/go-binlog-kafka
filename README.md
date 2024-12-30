@@ -16,7 +16,8 @@ A simple MySQL tool for syncing BinLog to Kafka with JSON format
 
 ## 推送的JSON格式数据
 
-每条数据变更(insert/update/delete)都会解析成以下格式JSON,并将短时间多条数据变更JSON合并成数组推送至配置的kafka的topic
+每条数据变更(insert/update/delete)都会解析成以下格式JSON数据结构:
+
 ```
 {
     "binlog_file": "mysql-bin.000052", // binlog file
@@ -32,6 +33,12 @@ A simple MySQL tool for syncing BinLog to Kafka with JSON format
 }
 ```
 
+
+### push_msg_mode=array 模式时，推送数据为数组
+
+push_msg_mode=array 模式时,并将短时间多条数据变更JSON合并成数组推送至配置的kafka的topic,kafka消息如下:
+
+
 ```
 # insert时，推送格式数据如下
 [{"binlog_file":"mysql-bin.000052","log_pos":3013167,"action":"insert","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-608","schema":"tests","values":{"id":8,"name":"insert test","type":1}}.....]
@@ -46,6 +53,26 @@ A simple MySQL tool for syncing BinLog to Kafka with JSON format
 # DDL操作时
 
 [{"binlog_file":"mysql-bin.000052","log_pos":3014315,"action":"DDL","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-612","schema":"tests","values":{"ddl_events":[{"schema":"tests","table":"tests","type":"alter_table"}],"ddl_sql":"alter table tests add column sign varchar(32) not null default '' comment 'sign'"}}...]
+```
+
+### push_msg_mode=single 模式时，推送数据为单条JSON
+
+push_msg_mode=single 模式时,会将每条JSON单独推送至配置的kafka的topic，kafka消息如下:
+
+```
+# insert时，推送格式数据如下
+{"binlog_file":"mysql-bin.000052","log_pos":3013167,"action":"insert","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-608","schema":"tests","values":{"id":8,"name":"insert test","type":1}}
+
+# update时，推送格式如下
+
+{"binlog_file":"mysql-bin.000052","log_pos":3013722,"action":"update","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-610","schema":"tests","before_values":{"id":8,"name":"insert test","type":1},"after_values":{"id":8,"name":"update test","type":1}}
+
+# delete时,推送数据如下
+{"binlog_file":"mysql-bin.000052","log_pos":3014032,"action":"delete","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-611","schema":"tests","values":{"id":8,"name":"update test","type":1}}
+
+# DDL操作时
+
+{"binlog_file":"mysql-bin.000052","log_pos":3014315,"action":"DDL","table":"tests","gtid":"68414ab6-fd2a-11ed-9e2d-0242ac110002:1-612","schema":"tests","values":{"ddl_events":[{"schema":"tests","table":"tests","type":"alter_table"}],"ddl_sql":"alter table tests add column sign varchar(32) not null default '' comment 'sign'"}}
 ```
 
 ## Options
@@ -66,6 +93,9 @@ A simple MySQL tool for syncing BinLog to Kafka with JSON format
 - admin_pass meta保存库密码,-meta_store_type=mysql时必填
 - admin_database meta保存库名称，默认`binlog_center`
 - debug  开启调试模式时，会输出推送kafka消息详情
+- push_msg_mode 推送消息模式，默认`array`,可选`single`. `array`会将短时间内多条数据变更合并成数组推送至kafka;`single`会将每条数据变更JSON单独推送至kafka
+- batch_max_rows 当push_msg_mode为`array`时，合并数据变更的最大行数，默认10;
+
 
 ### meta 保存表结构信息
 
