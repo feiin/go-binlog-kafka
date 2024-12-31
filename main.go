@@ -110,16 +110,22 @@ func main() {
 
 	cfg := replication.BinlogSyncerConfig{
 		ServerID: uint32(*replicationId),
-		Flavor:   "mysql",
+		Flavor:   mysql.MySQLFlavor,
 		Host:     *srcDbHost,
 		Port:     uint16(*srcDbPort),
 		User:     *srcDbUser,
 		Password: *srcDbPass,
 	}
 
+	logger.Info(context.Background()).Interface("cfg", cfg).Msg("start to sync")
+
 	syncer := replication.NewBinlogSyncer(cfg)
-	gtid, _ := mysql.ParseGTIDSet("mysql", *srcDbGtid)
-	streamer, _ := syncer.StartSyncGTID(gtid)
+	gtid, _ := mysql.ParseGTIDSet(mysql.MySQLFlavor, *srcDbGtid)
+	streamer, err := syncer.StartSyncGTID(gtid)
+	if err != nil {
+		logger.ErrorWith(context.Background(), err).Msg("StartSyncGTID error")
+		panic(err)
+	}
 
 	var rowData RowData
 
@@ -168,6 +174,7 @@ func main() {
 		if *binlogTimeout > 0 {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*binlogTimeout)*time.Millisecond)
 			ev, err = streamer.GetEvent(ctx)
+
 			cancel()
 			if err == context.DeadlineExceeded {
 				// logger.Info(ctx).Msg("GetEventTimeout timeout")

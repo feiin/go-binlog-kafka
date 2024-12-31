@@ -84,7 +84,7 @@ push_msg_mode=single 模式时,会将每条JSON单独推送至配置的kafka的t
 - src_db_host Binlog源库Host
 - src_db_port Binlog源库端口
 - binlog_timeout Binlog的read timeout
-- src_db_gtid Binlog源库开始GTID，第一次启动配置起作用， gtid获取方式，在源库上执行`show master status;`可以获取
+- src_db_gtid Binlog源库开始GTID，第一次启动配置起作用， gtid获取方式，在源库上执行`show master status;` 可以获取(mysql8.4.0:`SHOW BINARY LOG STATUS;`)
 - db_instance_name 实例名称，同时启动多个时保证唯一值
 - meta_store_type 程序解析binlog的位置等meta信息保存方式,默认`file`,可选`mysql`,当选`mysql`时需要配置*admin_*开头选项参数
 - admin_host meta保存库host,-meta_store_type=mysql时必填
