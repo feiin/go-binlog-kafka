@@ -105,7 +105,12 @@ func main() {
 
 	if binlogCenterPos != nil {
 		*srcDbGtid = binlogCenterPos.BinlogGtid
-		db.InitBinLogCenter(binlogCenterPos)
+		err := db.InitBinLogCenter(binlogCenterPos)
+		if err != nil {
+			logger.ErrorWith(context.Background(), err).Msg("initBinLogCenter error")
+			panic(err)
+		}
+
 	}
 
 	cfg := replication.BinlogSyncerConfig{

@@ -89,9 +89,8 @@ func GetMysqlTableColumns(schema string, table string) (columns []string, metaFr
 		}
 	}
 
-	for _, v := range metaDataMap[schema][table] {
-		columns = append(columns, v)
-	}
+	columns = append(columns, metaDataMap[schema][table]...)
+
 	return columns, metaFromMaster, nil
 }
 
