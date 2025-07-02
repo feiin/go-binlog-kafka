@@ -30,12 +30,12 @@ type TableBinlogInfo struct {
 	MetaData     string `db:"meta_data" json:"meta_data"`
 }
 
-func SaveReplicationPos(ctx context.Context, instanceName string, binlogPos uint32, binlogGtid, binlogFile string) (err error) {
+func SaveReplicationPos(ctx context.Context, instanceName string, binlogPos uint32, binlogGtid, binlogFile string, saveMetaData bool) (err error) {
 	switch binlogInfoStoreType {
 	case "mysql":
-		err = saveBinlogInfoToMysql(ctx, instanceName, binlogPos, binlogGtid, binlogFile)
+		err = saveBinlogInfoToMysql(ctx, instanceName, binlogPos, binlogGtid, binlogFile, saveMetaData)
 	case "file":
-		err = saveBinlogInfoToFile(ctx, instanceName, binlogPos, binlogGtid, binlogFile)
+		err = saveBinlogInfoToFile(ctx, instanceName, binlogPos, binlogGtid, binlogFile, saveMetaData)
 	}
 	return err
 }
@@ -50,13 +50,17 @@ func GetReplicationPos(ctx context.Context, instanceName string) (*BinLogCenterI
 	return nil, fmt.Errorf("not support binlog info store type: %s", binlogInfoStoreType)
 }
 
-func saveBinlogInfoToMysql(ctx context.Context, instanceName string, binlogPos uint32, binlogGtid, binlogFile string) error {
+func saveBinlogInfoToMysql(ctx context.Context, instanceName string, binlogPos uint32, binlogGtid, binlogFile string, saveMetaData bool) error {
 
-	metaData, err := json.Marshal(metaDataMap)
-	if err != nil {
-		return err
+	metaInfo := ""
+	if saveMetaData {
+		metaData, err := json.Marshal(metaDataMap)
+		if err != nil {
+			return err
+		}
+		metaInfo = string(metaData)
 	}
-	_, err = db.Use("binlog_center").Exec("insert into binlog_info (instance_name, binlog_pos, binlog_gtid, binlog_file,meta_data) values (?, ?, ?, ?,?) on duplicate key update instance_name=values(instance_name),binlog_pos=values(binlog_pos),binlog_gtid=values(binlog_gtid),binlog_file=values(binlog_file),meta_data=values(meta_data)", instanceName, binlogPos, binlogGtid, binlogFile, string(metaData))
+	_, err := db.Use("binlog_center").Exec("insert into binlog_info (instance_name, binlog_pos, binlog_gtid, binlog_file,meta_data) values (?, ?, ?, ?,?) on duplicate key update instance_name=values(instance_name),binlog_pos=values(binlog_pos),binlog_gtid=values(binlog_gtid),binlog_file=values(binlog_file),meta_data=values(meta_data)", instanceName, binlogPos, binlogGtid, binlogFile, metaInfo)
 	if err != nil {
 		logger.ErrorWith(ctx, err).Msg("saveBinlogInfoToMysql error")
 		return err
@@ -91,13 +95,17 @@ func getBinlogInfoFromMysql(ctx context.Context, instanceName string) (*BinLogCe
 	return &result, nil
 }
 
-func saveBinlogInfoToFile(ctx context.Context, instanceName string, binlogPos uint32, binlogGtid, binlogFile string) error {
+func saveBinlogInfoToFile(ctx context.Context, instanceName string, binlogPos uint32, binlogGtid, binlogFile string, saveMetaData bool) error {
 	posInfo := &BinLogCenterInfo{
 		InstanceName: instanceName,
 		BinlogPos:    binlogPos,
 		BinlogGtid:   binlogGtid,
 		BinlogFile:   binlogFile,
 		MetaData:     metaDataMap,
+	}
+
+	if !saveMetaData {
+		posInfo.MetaData = nil
 	}
 
 	posInfoJson, err := json.Marshal(posInfo)

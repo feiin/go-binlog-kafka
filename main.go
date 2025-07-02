@@ -79,6 +79,8 @@ func main() {
 	isDebug := flag.Bool("debug", false, "is debug mode")
 	batchMaxRows := flag.Int("batch_max_rows", 10, "binlog batch push max rows")
 	push_msg_mode := flag.String("push_msg_mode", "array", "push msg mode option array/single")
+	// check if need store metadata
+	storeMetaData := flag.Bool("store_meta_data", true, "store meta data to db, default true")
 
 	flag.Parse()
 
@@ -159,7 +161,7 @@ func main() {
 
 			// 2. update position
 			lastRow := eventRowList[len(eventRowList)-1]
-			err = db.SaveReplicationPos(ctx, *dbInstanceName, lastRow.LogPos, lastRow.Gtid, lastRow.BinLogFile)
+			err = db.SaveReplicationPos(ctx, *dbInstanceName, lastRow.LogPos, lastRow.Gtid, lastRow.BinLogFile, *storeMetaData)
 			if err != nil {
 				logger.ErrorWith(ctx, err).Msg("SaveReplicationPos error")
 				panic(err)
