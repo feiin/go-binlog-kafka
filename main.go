@@ -21,6 +21,7 @@ func pushDataToKafka(ctx context.Context, eventRowList []RowData, kafkaTopicName
 
 	if isSingleMode {
 		for _, row := range eventRowList {
+
 			// 1. push to kafka
 			pushJsonData, err := json.Marshal(row)
 			if err != nil {
@@ -59,6 +60,28 @@ func pushDataToKafka(ctx context.Context, eventRowList []RowData, kafkaTopicName
 	logger.Info(ctx).Interface("rowCount", len(eventRowList)).Msg("success to push to kafka")
 	return nil
 }
+
+func isIgnoreTable(ctx context.Context, schema, table string) bool {
+
+	// ignore gh-ost tmp tables
+	// _<table_name>_del, _<table_name>_gho, _<table_name>_ghc
+	if strings.HasPrefix(table, "_") && strings.HasSuffix(table, "_del") {
+		logger.Info(ctx).Str("table", table).Msg("ingore table")
+		return true
+	}
+
+	if strings.HasPrefix(table, "_") && strings.HasSuffix(table, "_gho") {
+		logger.Info(ctx).Str("table", table).Msg("ingore table")
+		return true
+	}
+
+	if strings.HasPrefix(table, "_") && strings.HasSuffix(table, "_ghc") {
+		logger.Info(ctx).Str("table", table).Msg("ingore table")
+		return true
+	}
+	return false
+}
+
 func main() {
 	dbInstanceName := flag.String("db_instance_name", "", "Database instance name")
 	kafkaTopicName := flag.String("kafka_topic_name", "", "Kafka topic name")
@@ -233,6 +256,9 @@ func main() {
 				}
 				rowData.Values = values
 				rowData.Table = string(rowsEvent.Table.Table)
+				if isIgnoreTable(ctx, rowData.Schema, rowData.Table) {
+					continue
+				}
 				eventRowList = append(eventRowList, rowData)
 
 			}
